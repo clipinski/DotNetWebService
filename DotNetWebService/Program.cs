@@ -206,7 +206,7 @@ class DotNetWebService
         // Process request in new thread
         _ = Task.Run(() => MainLoop(token), token);
 
-        Console.Write("\nDotNetWebSercice is running!");
+        Console.Write("\nDotNetWebService is running!");
         Console.Write("\n\nPress any key to shutdown service...");
         Console.ReadKey(true);
 
