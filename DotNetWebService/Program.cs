@@ -43,7 +43,7 @@ class DotNetWebService
 
     // For the purposes of this demo application (in lieu of adding database suport)
     //  we will simply create a list of "Animal" objects that can be accessed and 
-    //  manipulated but this API.
+    //  manipulated by this API.
     class Animal {
         public required int Id { get; set; }
         public required string Species { get; set; }
