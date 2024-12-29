@@ -29,6 +29,7 @@ using System.Text;
 using System.Text.Json;
 using System.Reflection;
 using System.Reflection.Metadata;
+using System.Runtime.CompilerServices;
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // Sample Rest API (DotNetWebService)
@@ -96,7 +97,7 @@ class DotNetWebService
                     }
                     else
                     {
-                        SendErrorResponse(context, 404, "Requested animal not found.");
+                        SendErrorResponse(context, (int)HttpStatusCode.NotFound, "Requested animal not found.");
                     }
                 }
             }
@@ -118,25 +119,44 @@ class DotNetWebService
     {
         if (context?.Request?.Url is not null)
         {
-            // Get our route from the URL
-            String route = context.Request.Url.Segments[1].Replace("/", "");
-
-            // Get the HTTP method from the request
-            String action = context.Request.HttpMethod;
-
-            // Get the first method in this class that have HandleRoute attribute where the route is equal
-            //  to the URL segment from the incoming request
-            // NOTE: BindingFlags are used to make sure we find out private static methods
-            var method = typeof(DotNetWebService)
-                                .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
-                                .Where(method => method.GetCustomAttributes(true).Any(attr => attr is HandleRequest && ((HandleRequest)attr).Route == route && ((HandleRequest)attr).Action == action))
-                                .FirstOrDefault();
-
-            // Call that method if we found it, otherwise we will simply ignore requests that we
-            //   are not setup to handle
-            if (method is not null)
+            // We are only handleing requests that have at least 2 segments
+            //   the "root" segment ("/") and the route name (in this case something like "animals")
+            if (context?.Request?.Url?.Segments?.Length > 1)
             {
-                method.Invoke(null, new object[]{context});
+                // Get our route from the URL
+                String route = context.Request.Url.Segments[1].Replace("/", "");
+
+                // Get the HTTP method from the request
+                String action = context.Request.HttpMethod;
+
+                // Get the first method in this class that have HandleRoute attribute where the route is equal
+                //  to the URL segment from the incoming request
+                // NOTE: BindingFlags are used to make sure we find out private static methods
+                var method = typeof(DotNetWebService)
+                                    .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                                    .Where(method => method.GetCustomAttributes(true).Any(attr => attr is HandleRequest && ((HandleRequest)attr).Route == route && ((HandleRequest)attr).Action == action))
+                                    .FirstOrDefault();
+
+                // Call that method if we found it
+                if (method is not null)
+                {
+                    method.Invoke(null, new object[]{context});
+                }
+                else
+                {
+                    // Return 404
+                    context.Response.StatusCode = (int)HttpStatusCode.NotFound;
+                    context.Response.OutputStream.Close();
+                }
+            }
+            else
+            {
+                // Return 404
+                if (context?.Request is not null)
+                {
+                    context.Response.StatusCode = (int)HttpStatusCode.NotFound;
+                    context.Response.OutputStream.Close();               
+                }
             }
         }
     }
