@@ -187,7 +187,7 @@ class DotNetWebService
                 // Wait for an incoming request.  We pass our cancellation token to "WaitAsync" so that
                 //  then cancellation is requsted, if we are waiting for an incoming request, the
                 //  TaskCanceledException will be thrown and we will stop waiting.
-                HttpListenerContext context = await listener.GetContextAsync().WaitAsync(ct);
+                HttpListenerContext context = await listener.GetContextAsync().WaitAsync(ct).ConfigureAwait(false);
 
                 // Process request in new thread
                 _ = Task.Run(() => ProcessRequest(context));
