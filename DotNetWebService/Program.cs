@@ -127,46 +127,59 @@ class DotNetWebService
     /////////////////////////////////////////////////////////////////////////////////////
     static void ProcessRequest(HttpListenerContext context)
     {
-        if (context?.Request?.Url is not null)
+        try
         {
-            // We are only handleing requests that have at least 2 segments
-            //   the "root" segment ("/") and the route name (in this case something like "animals")
-            if (context?.Request?.Url?.Segments?.Length > 1)
+            if (context?.Request?.Url is not null)
             {
-                // Get our route from the URL
-                String route = context.Request.Url.Segments[1].Replace("/", "");
-
-                // Get the HTTP method from the request
-                String action = context.Request.HttpMethod;
-
-                // Get the first method in this class that have HandleRoute attribute where the route is equal
-                //  to the URL segment from the incoming request
-                // NOTE: BindingFlags are used to make sure we find out private static methods
-                var method = typeof(DotNetWebService)
-                                    .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
-                                    .Where(method => method.GetCustomAttributes(true).Any(attr => attr is Endpoint && ((Endpoint)attr).Route == route && ((Endpoint)attr).Action == action))
-                                    .FirstOrDefault();
-
-                // Call that method if we found it
-                if (method is not null)
+                // We are only handleing requests that have at least 2 segments
+                //   the "root" segment ("/") and the route name (in this case something like "animals")
+                if (context?.Request?.Url?.Segments?.Length > 1)
                 {
-                    method.Invoke(null, new object[]{context});
+                    // Get our route from the URL
+                    String route = context.Request.Url.Segments[1].Replace("/", "");
+
+                    // Get the HTTP method from the request
+                    String action = context.Request.HttpMethod;
+
+                    // Get the first method in this class that have HandleRoute attribute where the route is equal
+                    //  to the URL segment from the incoming request
+                    // NOTE: BindingFlags are used to make sure we find out private static methods
+                    var method = typeof(DotNetWebService)
+                                        .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                                        .Where(method => method.GetCustomAttributes(true).Any(attr => attr is Endpoint && ((Endpoint)attr).Route == route && ((Endpoint)attr).Action == action))
+                                        .FirstOrDefault();
+
+                    // Call that method if we found it
+                    if (method is not null)
+                    {
+                        method.Invoke(null, new object[]{context});
+                    }
+                    else
+                    {
+                        // Return 404
+                        context.Response.StatusCode = (int)HttpStatusCode.NotFound;
+                        context.Response.OutputStream.Close();
+                    }
                 }
                 else
                 {
                     // Return 404
-                    context.Response.StatusCode = (int)HttpStatusCode.NotFound;
-                    context.Response.OutputStream.Close();
+                    if (context?.Request is not null)
+                    {
+                        context.Response.StatusCode = (int)HttpStatusCode.NotFound;
+                        context.Response.OutputStream.Close();               
+                    }
                 }
             }
-            else
+        }
+        catch (Exception e)
+        {
+            Console.Write($"\n\nUnhandled Exception! {e.Message}");
+
+            if (context?.Response is not null)
             {
-                // Return 404
-                if (context?.Request is not null)
-                {
-                    context.Response.StatusCode = (int)HttpStatusCode.NotFound;
-                    context.Response.OutputStream.Close();               
-                }
+                context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                context.Response.OutputStream.Close();          
             }
         }
     }
@@ -177,7 +190,7 @@ class DotNetWebService
     /// Main loop for the service.  This will start the HTTPListener on the specified 
     ///   port, wait for incoming requests, and then make a call to process each request.
     /////////////////////////////////////////////////////////////////////////////////////
-    static async Task StartListening(int port, CancellationToken ct)
+    static async Task StartListening(int port, int maxConcurrentListeners, CancellationToken ct)
     {
         // Create HTTP Listener
         HttpListener listener = new HttpListener();
@@ -192,26 +205,52 @@ class DotNetWebService
             listener.Start();
             Console.Write($"\n\n-- Listening on Port: {port}");
 
+            // Create and start (maxConcurrentListeners) number of tasks that will be listening
+            //  for incoming requests.
+            // We pass our cancellation token to "WaitAsync" so that
+            //  then cancellation is requsted, if we are waiting for an incoming request, the
+            //  TaskCanceledException will be thrown and we will stop waiting.
+            //
+            // NOTE: This is surely "overkill" for our simple server, but meant to serve
+            //        as an example of one way to accomplish concurrency
+            var concurrentListeners = new HashSet<Task>();
+            for(int i = 0; i < maxConcurrentListeners; i++)
+            {
+                concurrentListeners.Add(listener.GetContextAsync().WaitAsync(ct));
+            }
+
+            // Keep going until we recieve a cancellation request
             while(!ct.IsCancellationRequested)
             {
-                // Wait for an incoming request.  We pass our cancellation token to "WaitAsync" so that
-                //  then cancellation is requsted, if we are waiting for an incoming request, the
-                //  TaskCanceledException will be thrown and we will stop waiting.
-                HttpListenerContext context = await listener.GetContextAsync().WaitAsync(ct).ConfigureAwait(false);
+                // Wait for any of our tasks to finish
+                Task t = await Task.WhenAny(concurrentListeners);
 
-                // In our code, "ProcessRequest()" is a synchronous method (we make no async calls) so we 
-                //  speficially start a new thread to handle the request as opposed to async/await.
+                // Get the context from the completed task
+                HttpListenerContext context = ((Task<HttpListenerContext>)t).Result;
+
+                // Process the request in a new thread
                 _ = Task.Run(() => ProcessRequest(context));
+
+                // Remove the completed listener task from the list and start up a new one
+                concurrentListeners.Remove(t);
+                concurrentListeners.Add(listener.GetContextAsync().WaitAsync(ct));
             }
 
         }
-        catch(TaskCanceledException)
+        catch (TaskCanceledException)
         {
             Console.Write($"\n\n-- Shutdown Requested...");
         }
         catch (Exception e)
         {
-            Console.Write($"\n\n-- ERROR! {e.Message}");
+            if (e.InnerException is TaskCanceledException)
+            {
+                Console.Write($"\n\n-- Shutdown Requested...");
+            }
+            else
+            {
+                Console.Write($"\n\n-- ERROR! {e.Message}");
+            }
         }
         finally
         {
@@ -234,8 +273,8 @@ class DotNetWebService
         CancellationTokenSource cts = new CancellationTokenSource();
         CancellationToken token = cts.Token;
 
-        // Process request in new thread
-        _ = Task.Run(() => StartListening(8080, token), token);
+        // Start our listening in a new thread
+        _ = Task.Run(() => StartListening(8080, 16, token), token);
 
         Console.Write("\nDotNetWebService is running!");
         Console.Write("\n\nPress any key to shutdown service...");
