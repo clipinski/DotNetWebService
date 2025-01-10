@@ -39,9 +39,6 @@ using System.Runtime.CompilerServices;
 /////////////////////////////////////////////////////////////////////////////////////////
 class DotNetWebService
 {
-    // Define the port on which to listen for incoming requests
-    const int _defaultPort = 8080;
-
     // For the purposes of this demo application (in lieu of adding database suport)
     //  we will simply create a list of "Animal" objects that can be accessed and 
     //  manipulated by this API.
@@ -175,12 +172,12 @@ class DotNetWebService
     }
 
     /////////////////////////////////////////////////////////////////////////////////////
-    /// Method: MainLoop
+    /// Method: StartListening
     /// 
     /// Main loop for the service.  This will start the HTTPListener on the specified 
     ///   port, wait for incoming requests, and then make a call to process each request.
     /////////////////////////////////////////////////////////////////////////////////////
-    static async Task MainLoop(CancellationToken ct)
+    static async Task StartListening(int port, CancellationToken ct)
     {
         // Create HTTP Listener
         HttpListener listener = new HttpListener();
@@ -189,11 +186,11 @@ class DotNetWebService
         {
             // Specifiy we will handle all incoming requests
             //  on our configured port
-            listener.Prefixes.Add($"http://localhost:{_defaultPort}/");
+            listener.Prefixes.Add($"http://localhost:{port}/");
 
             // Begin Listening
             listener.Start();
-            Console.Write($"\n\n-- Listening on Port: {_defaultPort}");
+            Console.Write($"\n\n-- Listening on Port: {port}");
 
             while(!ct.IsCancellationRequested)
             {
@@ -238,7 +235,7 @@ class DotNetWebService
         CancellationToken token = cts.Token;
 
         // Process request in new thread
-        _ = Task.Run(() => MainLoop(token), token);
+        _ = Task.Run(() => StartListening(8080, token), token);
 
         Console.Write("\nDotNetWebService is running!");
         Console.Write("\n\nPress any key to shutdown service...");
