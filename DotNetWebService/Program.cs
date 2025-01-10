@@ -51,22 +51,25 @@ class DotNetWebService
         public required string Habitat { get; set; }
     }
 
-    static Animal[] _Animals =
-    [
+    static List<Animal> _Animals = new List<Animal>()
+    { 
         new Animal { Id = 1, Species = "Giraffe", Habitat = "Savannah" },
         new Animal { Id = 2, Species = "Walrus", Habitat = "Arctic" },
         new Animal { Id = 3, Species = "Monkey", Habitat = "Forest" },
         new Animal { Id = 4, Species = "Toucan", Habitat = "Rainforest" }
-    ];
+    };
+
+    // We will use this for simple thread synchronization
+    static object _AnimalsLock = new object();
 
     // This defines a custom attribute that we will use to add metadata to our
     //   request handler methods.  This will allow us to send incoming requests 
     //   to the correct handler based on the incoming URL.
-    class HandleRequest : Attribute
+    class Endpoint : Attribute
     {
         public string Action;
         public string Route;
-        public HandleRequest(string action, string route)
+        public Endpoint(string action, string route)
         {
             Action = action;
             Route = route;
@@ -76,7 +79,7 @@ class DotNetWebService
     /////////////////////////////////////////////////////////////////////////////////////
     /// Get Animals Endpoint
     /////////////////////////////////////////////////////////////////////////////////////
-    [HandleRequest("GET", "animals")]
+    [Endpoint("GET", "animals")]
     static void HandleGetAnimals(HttpListenerContext context)
     {
         if (context?.Request?.Url is not null) 
@@ -89,22 +92,32 @@ class DotNetWebService
                 int requestedId = 0;
                 if (int.TryParse(context.Request.Url.Segments[2].Replace("/", ""), out requestedId))
                 {
-                    // Find that animal in the list
-                    Animal? theAnimal = _Animals.Where(animal => animal.Id == requestedId).FirstOrDefault();
-                    if (theAnimal is not null) 
+                    // Since we have setup processing of requests asynchronously, we must ensure
+                    //  only one thread can read/write to our main list at a time
+                    lock(_AnimalsLock)
                     {
-                        SendJSONResponse(context, theAnimal);
-                    }
-                    else
-                    {
-                        SendErrorResponse(context, (int)HttpStatusCode.NotFound, "Requested animal not found.");
+                        // Find that animal in the list
+                        Animal? theAnimal = _Animals.Where(animal => animal.Id == requestedId).FirstOrDefault();
+                        if (theAnimal is not null) 
+                        {
+                            SendJSONResponse(context, theAnimal);
+                        }
+                        else
+                        {
+                            SendErrorResponse(context, (int)HttpStatusCode.NotFound, "Requested animal not found.");
+                        }
                     }
                 }
             }
             else
             {
                 // No ID was given so just return the full list
-                SendJSONResponse(context, _Animals);
+                // Since we have setup processing of requests asynchronously, we must ensure
+                //  only one thread can read/write to our main list at a time
+                lock(_AnimalsLock)
+                {
+                    SendJSONResponse(context, _Animals);
+                }
             }
         }
     }
@@ -134,7 +147,7 @@ class DotNetWebService
                 // NOTE: BindingFlags are used to make sure we find out private static methods
                 var method = typeof(DotNetWebService)
                                     .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
-                                    .Where(method => method.GetCustomAttributes(true).Any(attr => attr is HandleRequest && ((HandleRequest)attr).Route == route && ((HandleRequest)attr).Action == action))
+                                    .Where(method => method.GetCustomAttributes(true).Any(attr => attr is Endpoint && ((Endpoint)attr).Route == route && ((Endpoint)attr).Action == action))
                                     .FirstOrDefault();
 
                 // Call that method if we found it
@@ -189,7 +202,8 @@ class DotNetWebService
                 //  TaskCanceledException will be thrown and we will stop waiting.
                 HttpListenerContext context = await listener.GetContextAsync().WaitAsync(ct).ConfigureAwait(false);
 
-                // Process request in new thread
+                // In our code, "ProcessRequest()" is a synchronous method (we make no async calls) so we 
+                //  speficially start a new thread to handle the request as opposed to async/await.
                 _ = Task.Run(() => ProcessRequest(context));
             }
 
