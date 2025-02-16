@@ -1,5 +1,5 @@
 # DotNetWebService
-A simple web service in .NET Core using C#
+A simple multithreaded web service in .NET Core using C#
 
 ## What is this for?
 This project is intended to be used as a learning tool/starting point for anyone interested in C#/.NET Core Web API development.  The code contains many comments designed to help a beginner understand how and why the code works.
